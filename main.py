@@ -21,6 +21,7 @@ def body_excerpt(text, limit=120):
     """
     if not text:
         return ""
+    # My redaction pattern needs a key name from its list followed by a colon or equals sign. A bare token, a cookie value, or a credential under a name the pattern does not know passes into the excerpt untouched, so the excerpt is safer than a raw body, not safe by construction.
     redacted = _CREDENTIAL_RE.sub(lambda m: m.group(1) + "=[REDACTED]", text)
     redacted = _BEARER_RE.sub("Bearer [REDACTED]", redacted)
     redacted = " ".join(redacted.split())
@@ -113,12 +114,15 @@ def fuzz_endpoint(base_url, endpoint, payload_type, payloads, timeout):
     failed = 0
     non_2xx = 0
     for payload in payloads:
+        # Every endpoint in my list starts with a slash, so urljoin throws away any path the base URL carried. An API mounted under a prefix, example.com/backend, is fuzzed at the host root instead, and a run against a prefixed base silently tests a different surface than the operator named.
         url = urljoin(base_url, endpoint)
+        # The payload always travels in a JSON body under one fixed name, param. An endpoint that reads its input from the query string, a form field, or a differently named JSON key never receives the payload in a place it reads, and its clean result says nothing about those inputs.
         data = {"param": payload}  # Example: Assuming a parameter named 'param'
         headers = {"Content-Type": "application/json"}  # Adjust as needed
 
         try:
             logging.debug(f"Fuzzing URL: {url} with payload type: {payload_type}")
+            # Everything is a POST. An endpoint that only accepts GET answers 405 to every payload, which inflates the non 2xx count in the summary without any payload having been evaluated by the application at all.
             response = requests.post(url, json=data, headers=headers, timeout=timeout)
             succeeded += 1
 
@@ -134,6 +138,7 @@ def fuzz_endpoint(base_url, endpoint, payload_type, payloads, timeout):
             # Reflection is checked on its own evidence, for every
             # response, and is labeled with the payload family that
             # was actually sent.
+            # Reflection is the only content evidence I collect, and it is an exact substring test. An endpoint that echoes my JSON back in an error message is flagged for every family including the ones it plainly handled, while an injection that changes behaviour without echoing the payload leaves no trace in my output.
             if payload in response.text:
                 logging.warning(f"Reflected payload detected at {url}: a {payload_type} payload was reflected in the response (status {response.status_code}, excerpt: {body_excerpt(response.text)})")
 
